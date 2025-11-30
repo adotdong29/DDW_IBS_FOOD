@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "GIVisionEat",
+    "slug": "gi-vision-eat",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {},
+    "web": {}
+  }
+}

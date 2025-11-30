@@ -1,0 +1,18 @@
+0 verbose cli /usr/local/bin/node /usr/local/lib/node_modules/npm/bin/npm-cli.js
+1 info using npm@10.8.3
+2 info using node@v22.9.0
+3 silly config load:file:/usr/local/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/qdong/Desktop/Desktop1/Andy/DDW_IBS_FOOD/mobile/app/.npmrc
+5 silly config load:file:/Users/qdong/.npmrc
+6 silly config load:file:/usr/local/etc/npmrc
+7 verbose title npm exec expo install expo-camera expo-image-picker expo-status-bar
+8 verbose argv "exec" "--" "expo" "install" "expo-camera" "expo-image-picker" "expo-status-bar"
+9 verbose logfile logs-max:10 dir:/Users/qdong/Desktop/Desktop1/Andy/DDW_IBS_FOOD/mobile/app/.npm-cache/_logs/2025-11-30T02_37_10_646Z-
+10 verbose logfile /Users/qdong/Desktop/Desktop1/Andy/DDW_IBS_FOOD/mobile/app/.npm-cache/_logs/2025-11-30T02_37_10_646Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /Users/qdong/Desktop/Desktop1/Andy/DDW_IBS_FOOD/mobile/app
+13 verbose os Darwin 23.6.0
+14 verbose node v22.9.0
+15 verbose npm  v10.8.3
+16 verbose exit 0
+17 info ok
