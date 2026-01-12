@@ -1,18 +1,21 @@
+#!/usr/bin/env python3
+"""
+FastAPI server version of the new 3-step IBS food analysis backend.
+Uses: Vision → Verification → IBS Risk Assessment
+"""
 import os
 import base64
 import json
 import requests
 import tempfile
-from typing import Literal, Optional
+from typing import Optional, Literal
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
-# NEW: load environment variables from .env.local (and optionally .env)
 from dotenv import load_dotenv
 
-# Try to load from .env.local first, then fall back to default .env, etc.
+# Load environment variables
 load_dotenv(".env.local")
 load_dotenv()
 
@@ -20,19 +23,18 @@ load_dotenv()
 # Configuration
 # -----------------------------
 
-API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL = "gpt-4o"
 
-# Use a vision-capable model. You can change this to another id your account supports.
-VISION_MODEL = "gpt-4o"
-TEXT_MODEL = "gpt-4o"  # text-only step; can be the same model
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY not set")
 
 # -----------------------------
 # FastAPI app + CORS
 # -----------------------------
 
-app = FastAPI()
+app = FastAPI(title="IBS Food Vision API", version="2.0")
 
-# Allow everything during development. In production, lock this down.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,225 +44,286 @@ app.add_middleware(
 )
 
 # -----------------------------
-# Helper functions
+# Utilities
 # -----------------------------
 
-def encode_image(image_path: str) -> str:
-    """Read an image file and return a base64-encoded string."""
-    with open(image_path, "rb") as f:
+def encode_image(path: str) -> str:
+    """Encode image file to base64."""
+    with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def get_api_key() -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
-    return api_key
-
-
-def openai_chat(messages, model: str, max_tokens: int = 500, response_format: Optional[dict] = None) -> str:
-    """
-    Thin wrapper around the Chat Completions API.
-    Returns the raw text content from the first choice.
-    """
-    api_key = get_api_key()
-
+def openai_chat(messages: list, max_completion_tokens: int = 800) -> str:
+    """Call OpenAI Chat API."""
+    url = "https://api.openai.com/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
-
     payload = {
-        "model": model,
+        "model": MODEL,
         "messages": messages,
-        "max_tokens": max_tokens,
+        "max_completion_tokens": max_completion_tokens,
     }
-    if response_format:
-        payload["response_format"] = response_format
-
-    resp = requests.post(API_URL, headers=headers, json=payload, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    return content
+    r = requests.post(url, headers=headers, json=payload, timeout=60)
+    if r.status_code != 200:
+        raise RuntimeError(r.text)
+    return r.json()["choices"][0]["message"]["content"]
 
 
-def parse_json_from_model_output(content: str) -> dict:
+def extract_json(text: str) -> dict:
     """
-    Strip ```json fences if present and parse JSON.
+    Extract the first JSON object from model output.
+    Handles code fences, preambles, and extra whitespace.
     """
-    text = (content or "").strip()
-    if not text:
-        raise ValueError("Model returned empty content instead of JSON.")
+    if not text or not text.strip():
+        raise ValueError("Model returned empty output")
 
-    # If the response starts with ``` (e.g., ```json), strip the first and last fence lines.
+    text = text.strip()
+
+    # Remove markdown fences
     if text.startswith("```"):
-        lines = text.splitlines()
-        # Drop the first line (``` or ```json)
-        lines = lines[1:]
-        # Drop the last line if it's a closing ```
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+        parts = text.split("```")
+        for p in parts:
+            p = p.strip()
+            if p.startswith("{") and p.endswith("}"):
+                return json.loads(p)
 
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        print("Could not parse JSON. Raw model output was:\n")
-        print(content)
-        raise
+    # Fallback: first {...} block
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found in model output")
+
+    return json.loads(text[start:end + 1])
 
 
 # -----------------------------
-# Step 1: Vision → dish + ingredients
+# Step 1: Vision Observation
 # -----------------------------
 
-def analyze_food_image(image_path: str) -> dict:
+def vision_step(image_path: str) -> dict:
     """
-    Use the vision model to extract:
-      - dish_name (string)
-      - ingredients (list of strings)
-      - preparation (string)
+    Observe what's visible in the food image without assumptions.
     """
-    base64_image = encode_image(image_path)
-    data_url = f"data:image/jpeg;base64,{base64_image}"
+    image_b64 = encode_image(image_path)
 
     system_prompt = (
-        "You are a food recognition assistant helping patients with digestive issues. "
-        "Given a photo of a meal, identify: "
-        "1) a short dish name, "
-        "2) a list of main ingredients, "
-        "3) how the food is prepared (e.g., fried, baked, raw, grilled). "
-        "Respond ONLY with valid JSON and no extra text, with keys: "
-        "dish_name (string), ingredients (list of strings), preparation (string)."
+        "You are a careful visual observer. "
+        "Describe ONLY what is visible in the image. "
+        "Do NOT guess recipes, ingredients, or preparation steps. "
+        "If unsure, mark items as possible or uncertain. "
+        "Return ONLY valid JSON."
     )
 
-    messages = [
-        {"role": "system", "content": system_prompt},
+    user_prompt = [
         {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Please analyze this meal image."},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ],
+            "type": "text",
+            "text": (
+                "Analyze this food image.\n"
+                "Return JSON with:\n"
+                "- dish_name (generic if unsure)\n"
+                "- observed_food_components (clearly visible food items)\n"
+                "- possible_food_components (uncertain food items)\n"
+                "- non_food_objects\n"
+                "- visual_cues (e.g., fried, creamy, glazed, plain)\n"
+                "- overall_confidence (0–1)\n"
+            ),
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
         },
     ]
 
-    content = openai_chat(
-        messages,
-        model=VISION_MODEL,
-        max_tokens=300,
-        response_format={"type": "json_object"},
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
     )
-    food_info = parse_json_from_model_output(content)
-    return food_info
+    return extract_json(out)
 
 
 # -----------------------------
-# Step 2: GI interpretation
+# Step 2: Verification
 # -----------------------------
 
-def gi_interpretation(food_info: dict, ibs_subtype: str = "unknown") -> dict:
+def verify_observation(obs: dict) -> dict:
     """
-    Given dish_name, ingredients, and preparation, ask an LLM to infer GI-relevant properties:
-      - fodmap_overall: 'low' | 'medium' | 'high'
-      - fodmap_breakdown: {ingredient: level}
-      - fiber: 'low' | 'medium' | 'high'
-      - fat: 'low' | 'medium' | 'high'
-      - lactose: 'low' | 'medium' | 'high'
-      - gluten: 'yes' | 'no' | 'unknown'
-      - spice: 'low' | 'medium' | 'high'
-      - eat_recommendation: 'yes' | 'caution' | 'no'
-      - eat_label: short label like 'Generally safe', 'Use caution', 'Better to avoid'
-      - advice_short: short patient-facing recommendation
-      - explanation: 2–3 sentence explanation
+    Verify and clean the observation, removing assumptions.
     """
-    dish_name = food_info.get("dish_name")
-    ingredients = food_info.get("ingredients", [])
-    preparation = food_info.get("preparation")
-
     system_prompt = (
-        "You are a gastroenterology nutrition assistant for IBS patients. "
-        "Based on standard knowledge of FODMAPs, fat content, lactose, gluten, fiber, "
-        "and common IBS triggers, you will estimate GI-relevant properties for a meal. "
-        "Be conservative and cautious. This is NOT medical advice or a diagnosis."
+        "You are auditing a visual description. "
+        "Remove any assumptions or recipe completion. "
+        "Keep only what can be justified by the image itself. "
+        "Return ONLY valid JSON."
     )
 
-    user_prompt = {
-        "dish_name": dish_name,
-        "ingredients": ingredients,
-        "preparation": preparation,
-        "ibs_subtype": ibs_subtype,  # 'IBS_C', 'IBS_D', 'IBS_M', or 'unknown'
+    user_prompt = (
+        "Review and clean the following observation:\n\n"
+        f"{json.dumps(obs, indent=2)}"
+    )
+
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return extract_json(out)
+
+
+# -----------------------------
+# Step 3: IBS Risk Assessment
+# -----------------------------
+
+def ibs_risk_step(obs: dict, ibs_subtype: str = "unknown") -> dict:
+    """
+    Assess IBS-related risks based on visible food components.
+    """
+    system_prompt = (
+        "You are providing IBS-oriented food risk guidance.\n"
+        "Base your reasoning ONLY on visible components and visual cues.\n"
+        "Do NOT cite medical facts or guarantees.\n"
+        "Avoid deterministic rules.\n"
+        "Acknowledge individual variability.\n"
+        "Return ONLY valid JSON."
+    )
+
+    # Build context based on subtype
+    subtype_context = ""
+    priority_guidance = ""
+    
+    if ibs_subtype and ibs_subtype != "unknown":
+        subtype_context = f"\n⚠️ USER'S IBS SUBTYPE: {ibs_subtype}\n"
+        
+        if ibs_subtype == "IBS_C":
+            priority_guidance = (
+                "PRIORITY FOR IBS-C: Focus on fiber content, binding foods, and low-residue items. "
+                "Foods high in insoluble fiber or those that slow motility may worsen constipation."
+            )
+        elif ibs_subtype == "IBS_D":
+            priority_guidance = (
+                "PRIORITY FOR IBS-D: Focus on foods that might trigger diarrhea, such as high-fat items, "
+                "spicy foods, caffeine, dairy, and high FODMAP foods. Gentle, binding foods are typically safer."
+            )
+        elif ibs_subtype == "IBS_M":
+            priority_guidance = (
+                "PRIORITY FOR IBS-M: Consider both constipation and diarrhea triggers. "
+                "Balanced fiber, avoiding extremes in fat/spice, and moderate portions are key."
+            )
+        elif ibs_subtype == "IBS_U":
+            priority_guidance = (
+                "PRIORITY FOR IBS-U: Triggers are not well-defined yet. "
+                "Provide conservative guidance and emphasize careful self-monitoring."
+            )
+        
+        subtype_context += f"{priority_guidance}\n"
+
+    user_prompt = (
+        "Given this food observation, assess IBS-related risk.\n"
+        f"{subtype_context}\n"
+        "Output JSON with:\n"
+        "- decision: likely_ok | caution | avoid (weighted toward the user's specific subtype if provided)\n"
+        "- risk_factors (list of visible triggers, prioritize those relevant to user's subtype)\n"
+        "- reasons (linked to visible evidence and user's subtype concerns)\n"
+        "- ibs_c_note (constipation-predominant guidance)\n"
+        "- ibs_d_note (diarrhea-predominant guidance)\n"
+        "- ibs_m_note (mixed pattern guidance)\n"
+        "- ibs_u_note (unclassified guidance)\n"
+        "- advice_short (tailored to user's subtype if provided)\n"
+        "- confidence (0–1)\n\n"
+        f"Food observation:\n{json.dumps(obs, indent=2)}"
+    )
+
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_completion_tokens=1000
+    )
+    return extract_json(out)
+
+
+# -----------------------------
+# API Routes
+# -----------------------------
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {
+        "status": "ok",
+        "version": "2.0",
+        "description": "IBS Food Vision API - 3-step analysis"
     }
 
-    assistant_instruction = (
-        "Given this meal description, respond ONLY with valid JSON (no extra text) with keys:\n"
-        "  fodmap_overall: one of 'low', 'medium', 'high'\n"
-        "  fodmap_breakdown: an object mapping each ingredient to 'low', 'medium', or 'high'\n"
-        "  fiber: one of 'low', 'medium', 'high'\n"
-        "  fat: one of 'low', 'medium', 'high'\n"
-        "  lactose: one of 'low', 'medium', 'high'\n"
-        "  gluten: one of 'yes', 'no', 'unknown'\n"
-        "  spice: one of 'low', 'medium', 'high'\n"
-        "  eat_recommendation: one of 'yes', 'caution', or 'no', indicating whether the meal is generally acceptable for most IBS patients, should be consumed with care, or is best avoided\n"
-        "  eat_label: a short label (<=40 chars), e.g. 'Generally safe', 'Use caution', 'Better to avoid'\n"
-        "  advice_short: a short (<=140 chars) patient-facing recommendation, e.g. "
-        "'Generally well tolerated in small portions.'\n"
-        "  explanation: 2–3 sentences explaining why you gave these ratings. "
-        "Do not mention that you are an AI model. Do not mention guidelines explicitly.\n"
-        "Remember this is not medical advice or a diagnosis.\n"
-        "Now, here is the meal description:\n"
-        f"{json.dumps(user_prompt)}"
-    )
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": assistant_instruction},
-    ]
-
-    content = openai_chat(
-        messages,
-        model=TEXT_MODEL,
-        max_tokens=600,
-        response_format={"type": "json_object"},
-    )
-    gi_info = parse_json_from_model_output(content)
-    return gi_info
-
-
-# -----------------------------
-# API route
-# -----------------------------
 
 @app.post("/analyze")
 async def analyze_meal(
     file: UploadFile = File(...),
-    ibs_subtype: Optional[Literal["IBS_C", "IBS_D", "IBS_M", "unknown"]] = Form("unknown"),
+    ibs_subtype: Optional[Literal["IBS_C", "IBS_D", "IBS_M", "IBS_U", "unknown"]] = Form("unknown"),
 ):
     """
-    Accepts an image + IBS subtype, returns combined food + GI interpretation.
+    Analyze food image for IBS safety.
+    3-step process: Vision → Verification → Risk Assessment
+    
+    Args:
+        file: Image file of the meal
+        ibs_subtype: IBS subtype (IBS_C, IBS_D, IBS_M, IBS_U, or unknown)
+    
+    Returns:
+        JSON with food observation and IBS risk assessment
     """
+    tmp_path = None
     try:
+        # Save uploaded file
         suffix = os.path.splitext(file.filename or "")[1] or ".jpg"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(await file.read())
+            content = await file.read()
+            tmp.write(content)
             tmp_path = tmp.name
 
-        food_info = analyze_food_image(tmp_path)
-        gi_info = gi_interpretation(food_info, ibs_subtype=ibs_subtype or "unknown")
+        # Step 1: Vision observation
+        raw_obs = vision_step(tmp_path)
+        
+        # Step 2: Verification
+        verified_obs = verify_observation(raw_obs)
+        
+        # Step 3: IBS risk assessment
+        ibs_result = ibs_risk_step(verified_obs, ibs_subtype=ibs_subtype or "unknown")
 
-        combined = {
-            "food": food_info,
-            "gi_interpretation": gi_info,
+        # Combine results
+        final = {
+            "food_observation": verified_obs,
+            "ibs_risk_result": ibs_result,
         }
 
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-
-        return JSONResponse(content=combined)
+        return JSONResponse(content=final)
 
     except Exception as e:
-        print("Error in /analyze:", e)
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        print(f"Error in /analyze: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(e),
+                "type": type(e).__name__
+            }
+        )
+    
+    finally:
+        # Clean up temp file
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
