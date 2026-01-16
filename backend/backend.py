@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FastAPI server version of the new 3-step IBS food analysis backend.
-Uses: Vision → Verification → IBS Risk Assessment
+FoodSense Unified Backend - Multi-Condition Food Analysis
+Supports: IBS, Allergy, Diabetes, Hypertension
 """
 import os
 import base64
@@ -33,7 +33,7 @@ if not OPENAI_API_KEY:
 # FastAPI app + CORS
 # -----------------------------
 
-app = FastAPI(title="IBS Food Vision API", version="2.0")
+app = FastAPI(title="FoodSense API", version="3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,7 +53,7 @@ def encode_image(path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def openai_chat(messages: list, max_completion_tokens: int = 800) -> str:
+def openai_chat(messages: list, max_completion_tokens: int = 1000) -> str:
     """Call OpenAI Chat API."""
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
@@ -72,10 +72,7 @@ def openai_chat(messages: list, max_completion_tokens: int = 800) -> str:
 
 
 def extract_json(text: str) -> dict:
-    """
-    Extract the first JSON object from model output.
-    Handles code fences, preambles, and extra whitespace.
-    """
+    """Extract the first JSON object from model output."""
     if not text or not text.strip():
         raise ValueError("Model returned empty output")
 
@@ -86,6 +83,8 @@ def extract_json(text: str) -> dict:
         parts = text.split("```")
         for p in parts:
             p = p.strip()
+            if p.lower().startswith("json"):
+                p = p[4:].strip()
             if p.startswith("{") and p.endswith("}"):
                 return json.loads(p)
 
@@ -99,20 +98,26 @@ def extract_json(text: str) -> dict:
 
 
 # -----------------------------
-# Step 1: Vision Observation
+# Vision Step (Shared)
 # -----------------------------
 
-def vision_step(image_path: str) -> dict:
-    """
-    Observe what's visible in the food image without assumptions.
-    """
+def vision_step(image_path: str, condition: str) -> dict:
+    """Observe what's visible in the food image."""
     image_b64 = encode_image(image_path)
+
+    # Customize observation based on condition
+    focus = {
+        "ibs": "textures that indicate cooking methods (fried, raw, fermented)",
+        "allergy": "visible allergens, cross-contamination risks",
+        "diabetes": "portion size and visual carbohydrate indicators",
+        "hypertension": "processing indicators (glazed, fried, cured, salted appearance)"
+    }.get(condition, "general food characteristics")
 
     system_prompt = (
         "You are a careful visual observer. "
         "Describe ONLY what is visible in the image. "
-        "Do NOT guess recipes, ingredients, or preparation steps. "
-        "If unsure, mark items as possible or uncertain. "
+        "Do NOT guess ingredients or hidden preparations. "
+        f"Pay special attention to {focus}. "
         "Return ONLY valid JSON."
     )
 
@@ -125,8 +130,8 @@ def vision_step(image_path: str) -> dict:
                 "- dish_name (generic if unsure)\n"
                 "- observed_food_components (clearly visible food items)\n"
                 "- possible_food_components (uncertain food items)\n"
-                "- non_food_objects\n"
-                "- visual_cues (e.g., fried, creamy, glazed, plain)\n"
+                "- visual_cues (e.g., fried, creamy, glazed, fresh)\n"
+                "- estimated_portion_size (if visible)\n"
                 "- overall_confidence (0–1)\n"
             ),
         },
@@ -146,93 +151,30 @@ def vision_step(image_path: str) -> dict:
 
 
 # -----------------------------
-# Step 2: Verification
+# IBS Risk Assessment
 # -----------------------------
 
-def verify_observation(obs: dict) -> dict:
-    """
-    Verify and clean the observation, removing assumptions.
-    """
-    system_prompt = (
-        "You are auditing a visual description. "
-        "Remove any assumptions or recipe completion. "
-        "Keep only what can be justified by the image itself. "
-        "Return ONLY valid JSON."
-    )
-
-    user_prompt = (
-        "Review and clean the following observation:\n\n"
-        f"{json.dumps(obs, indent=2)}"
-    )
-
-    out = openai_chat(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-    )
-    return extract_json(out)
-
-
-# -----------------------------
-# Step 3: IBS Risk Assessment
-# -----------------------------
-
-def ibs_risk_step(obs: dict, ibs_subtype: str = "unknown") -> dict:
-    """
-    Assess IBS-related risks based on visible food components.
-    """
+def ibs_risk_step(obs: dict) -> dict:
+    """Assess IBS-related risks based on visible food components."""
     system_prompt = (
         "You are providing IBS-oriented food risk guidance.\n"
         "Base your reasoning ONLY on visible components and visual cues.\n"
-        "Do NOT cite medical facts or guarantees.\n"
-        "Avoid deterministic rules.\n"
+        "Focus on FODMAPs and digestive patterns.\n"
         "Acknowledge individual variability.\n"
         "Return ONLY valid JSON."
     )
 
-    # Build context based on subtype
-    subtype_context = ""
-    priority_guidance = ""
-    
-    if ibs_subtype and ibs_subtype != "unknown":
-        subtype_context = f"\n⚠️ USER'S IBS SUBTYPE: {ibs_subtype}\n"
-        
-        if ibs_subtype == "IBS_C":
-            priority_guidance = (
-                "PRIORITY FOR IBS-C: Focus on fiber content, binding foods, and low-residue items. "
-                "Foods high in insoluble fiber or those that slow motility may worsen constipation."
-            )
-        elif ibs_subtype == "IBS_D":
-            priority_guidance = (
-                "PRIORITY FOR IBS-D: Focus on foods that might trigger diarrhea, such as high-fat items, "
-                "spicy foods, caffeine, dairy, and high FODMAP foods. Gentle, binding foods are typically safer."
-            )
-        elif ibs_subtype == "IBS_M":
-            priority_guidance = (
-                "PRIORITY FOR IBS-M: Consider both constipation and diarrhea triggers. "
-                "Balanced fiber, avoiding extremes in fat/spice, and moderate portions are key."
-            )
-        elif ibs_subtype == "IBS_U":
-            priority_guidance = (
-                "PRIORITY FOR IBS-U: Triggers are not well-defined yet. "
-                "Provide conservative guidance and emphasize careful self-monitoring."
-            )
-        
-        subtype_context += f"{priority_guidance}\n"
-
     user_prompt = (
-        "Given this food observation, assess IBS-related risk.\n"
-        f"{subtype_context}\n"
+        "Given this food observation, assess IBS-related risk.\n\n"
         "Output JSON with:\n"
-        "- decision: likely_ok | caution | avoid (weighted toward the user's specific subtype if provided)\n"
-        "- risk_factors (list of visible triggers, prioritize those relevant to user's subtype)\n"
-        "- reasons (linked to visible evidence and user's subtype concerns)\n"
+        "- decision: likely_ok | caution | avoid\n"
+        "- risk_factors (list of visible triggers)\n"
+        "- reasons (linked to visible evidence)\n"
         "- ibs_c_note (constipation-predominant guidance)\n"
         "- ibs_d_note (diarrhea-predominant guidance)\n"
         "- ibs_m_note (mixed pattern guidance)\n"
         "- ibs_u_note (unclassified guidance)\n"
-        "- advice_short (tailored to user's subtype if provided)\n"
+        "- advice_short\n"
         "- confidence (0–1)\n\n"
         f"Food observation:\n{json.dumps(obs, indent=2)}"
     )
@@ -248,6 +190,156 @@ def ibs_risk_step(obs: dict, ibs_subtype: str = "unknown") -> dict:
 
 
 # -----------------------------
+# Allergy Risk Assessment
+# -----------------------------
+
+def allergy_risk_step(obs: dict, user_allergies: Optional[str] = None) -> dict:
+    """Assess allergy risks focusing on cross-contamination and triggers."""
+    
+    allergy_context = ""
+    if user_allergies and user_allergies.strip():
+        allergy_context = (
+            f"\n⚠️ USER'S KNOWN ALLERGIES: {user_allergies}\n"
+            f"PRIORITY: Scan for these specific allergens and cross-contamination risks.\n"
+        )
+    
+    system_prompt = (
+        "You provide practical food allergy guidance.\n"
+        "Use common-sense thresholds:\n"
+        "- Fresh fruits and vegetables with no visible allergens → likely_ok\n"
+        "- Clearly visible major allergens (nuts, wheat, dairy) → avoid\n"
+        "- Mixed, processed, or unclear dishes → caution\n"
+        "Focus on cross-contamination risks.\n"
+        "Return ONLY valid JSON."
+    )
+
+    user_prompt = (
+        "Given this food observation, assess allergy risk.\n"
+        f"{allergy_context}\n"
+        "Output JSON with:\n"
+        "- decision: likely_ok | caution | avoid (prioritize user's specific allergies if provided)\n"
+        "- suspected_allergens (visible allergens, ESPECIALLY user's known allergies)\n"
+        "- possible_hidden_allergens (may be present but not visible)\n"
+        "- cross_contamination_risks (especially for user's allergies)\n"
+        "- reasons (linked to visible evidence and user's allergies)\n"
+        "- advice_short (personalized to user's allergies if provided)\n"
+        "- confidence (0–1)\n\n"
+        f"Food observation:\n{json.dumps(obs, indent=2)}"
+    )
+
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return extract_json(out)
+
+
+# -----------------------------
+# Diabetes Risk Assessment
+# -----------------------------
+
+def diabetes_risk_step(obs: dict, diabetes_type: Optional[str] = None) -> dict:
+    """Assess diabetes risks focusing on glycemic curve and carbohydrates."""
+    
+    diabetes_context = ""
+    if diabetes_type and diabetes_type != "general":
+        type_guidance = {
+            "type1": "Type 1 - Focus on carb counting for insulin dosing. More flexibility with timing.",
+            "type2": "Type 2 - Focus on glycemic control and weight management. Emphasize portion control.",
+            "gestational": "Gestational - Focus on blood sugar stability. Avoid high-GI foods.",
+            "prediabetes": "Prediabetes - Focus on prevention. Emphasize low-GI, high-fiber choices."
+        }.get(diabetes_type, "")
+        
+        if type_guidance:
+            diabetes_context = f"\n⚠️ USER HAS: {type_guidance}\n"
+    
+    system_prompt = (
+        "You are a Diabetes Educator.\n"
+        "Assess glycemic risk based on visible food observation.\n"
+        "Categorize impact as 'Steady', 'Gradual Rise', or 'Sharp Spike'.\n"
+        "Identify 'Glucose Drivers' and 'Glucose Buffers'.\n"
+        "Return ONLY valid JSON."
+    )
+
+    user_prompt = (
+        "Given this food observation, assess diabetes risk.\n"
+        f"{diabetes_context}\n"
+        "Output JSON with:\n"
+        "- decision: likely_ok | caution | avoid\n"
+        "- glucose_curve_prediction (Sharp Spike | Gradual Rise | Steady)\n"
+        "- carbohydrate_load (Low | Medium | High)\n"
+        "- net_carbs_estimate (e.g., '20-30g')\n"
+        "- glucose_drivers (list of visible triggers)\n"
+        "- glucose_buffers (list of fiber/protein/fat sources)\n"
+        "- reasons (linked to visible evidence and diabetes type if provided)\n"
+        "- advice_short (tailored to diabetes type if provided)\n"
+        "- confidence (0–1)\n"
+        "- uncertainty_notes\n\n"
+        f"Food observation:\n{json.dumps(obs, indent=2)}"
+    )
+
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return extract_json(out)
+
+
+# -----------------------------
+# Hypertension Risk Assessment
+# -----------------------------
+
+def hypertension_risk_step(obs: dict, hypertension_severity: Optional[str] = None) -> dict:
+    """Assess hypertension risks focusing on sodium/potassium balance (DASH)."""
+    
+    hypertension_context = ""
+    if hypertension_severity and hypertension_severity != "general":
+        severity_guidance = {
+            "stage1": "Stage 1 (130-139/80-89) - Need moderate sodium restriction. DASH diet recommended.",
+            "stage2": "Stage 2 (≥140/≥90) - Need strict sodium restriction (<1500mg/day). Close monitoring.",
+            "controlled": "Controlled with medication - Maintain DASH diet. Avoid high sodium spikes."
+        }.get(hypertension_severity, "")
+        
+        if severity_guidance:
+            hypertension_context = f"\n⚠️ USER HAS: {severity_guidance}\n"
+    
+    system_prompt = (
+        "You are a Hypertension Specialist and DASH Diet expert.\n"
+        "Assess blood pressure risk based on visible food observation.\n"
+        "Identify 'Pressure Drivers' (sodium, saturated fats, added sugars)\n"
+        "and 'Pressure Buffers' (potassium, magnesium, fiber, healthy fats).\n"
+        "Return ONLY valid JSON."
+    )
+
+    user_prompt = (
+        "Given this food observation, assess hypertension risk.\n"
+        f"{hypertension_context}\n"
+        "Output JSON with:\n"
+        "- decision: likely_ok | caution | avoid\n"
+        "- sodium_load_estimate (Low | Medium | High)\n"
+        "- pressure_drivers (list of visible sodium/fat triggers)\n"
+        "- pressure_buffers (list of potassium/magnesium/fiber sources)\n"
+        "- reasons (linked to visual evidence and severity if provided)\n"
+        "- advice_short (DASH-aligned tips, tailored to severity if provided)\n"
+        "- confidence (0–1)\n"
+        "- uncertainty_notes\n\n"
+        f"Food observation:\n{json.dumps(obs, indent=2)}"
+    )
+
+    out = openai_chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    return extract_json(out)
+
+
+# -----------------------------
 # API Routes
 # -----------------------------
 
@@ -256,26 +348,32 @@ async def root():
     """Health check endpoint."""
     return {
         "status": "ok",
-        "version": "2.0",
-        "description": "IBS Food Vision API - 3-step analysis"
+        "version": "3.0",
+        "description": "FoodSense API - Multi-condition food analysis",
+        "supported_conditions": ["ibs", "allergy", "diabetes", "hypertension"]
     }
 
 
 @app.post("/analyze")
 async def analyze_meal(
     file: UploadFile = File(...),
-    ibs_subtype: Optional[Literal["IBS_C", "IBS_D", "IBS_M", "IBS_U", "unknown"]] = Form("unknown"),
+    condition: Literal["ibs", "allergy", "diabetes", "hypertension"] = Form("ibs"),
+    user_allergies: Optional[str] = Form(None),
+    diabetes_type: Optional[str] = Form(None),
+    hypertension_severity: Optional[str] = Form(None),
 ):
     """
-    Analyze food image for IBS safety.
-    3-step process: Vision → Verification → Risk Assessment
+    Analyze food image for specified health condition with optional personalization.
     
     Args:
         file: Image file of the meal
-        ibs_subtype: IBS subtype (IBS_C, IBS_D, IBS_M, IBS_U, or unknown)
+        condition: Health condition to analyze for (ibs, allergy, diabetes, hypertension)
+        user_allergies: Comma-separated list of user's allergies (for allergy condition)
+        diabetes_type: Type of diabetes (type1, type2, gestational, prediabetes)
+        hypertension_severity: Severity level (stage1, stage2, controlled)
     
     Returns:
-        JSON with food observation and IBS risk assessment
+        JSON with food observation and condition-specific risk assessment
     """
     tmp_path = None
     try:
@@ -287,18 +385,34 @@ async def analyze_meal(
             tmp_path = tmp.name
 
         # Step 1: Vision observation
-        raw_obs = vision_step(tmp_path)
+        obs = vision_step(tmp_path, condition)
         
-        # Step 2: Verification
-        verified_obs = verify_observation(raw_obs)
-        
-        # Step 3: IBS risk assessment
-        ibs_result = ibs_risk_step(verified_obs, ibs_subtype=ibs_subtype or "unknown")
+        # Step 2: Condition-specific risk assessment
+        if condition == "ibs":
+            risk_result = ibs_risk_step(obs)
+            result_key = "ibs_risk_result"
+        elif condition == "allergy":
+            risk_result = allergy_risk_step(obs, user_allergies)
+            result_key = "allergy_risk_result"
+        elif condition == "diabetes":
+            risk_result = diabetes_risk_step(obs, diabetes_type)
+            result_key = "diabetes_risk_result"
+        elif condition == "hypertension":
+            risk_result = hypertension_risk_step(obs, hypertension_severity)
+            result_key = "hypertension_risk_result"
+        else:
+            raise ValueError(f"Unsupported condition: {condition}")
 
         # Combine results
         final = {
-            "food_observation": verified_obs,
-            "ibs_risk_result": ibs_result,
+            "condition": condition,
+            "food_observation": obs,
+            result_key: risk_result,
+            "disclaimer": (
+                "Image-based guidance only. Hidden ingredients, seasonings, and "
+                "off-camera additions cannot be detected. Not medical advice. "
+                "Always consult with a healthcare provider for personalized guidance."
+            )
         }
 
         return JSONResponse(content=final)
