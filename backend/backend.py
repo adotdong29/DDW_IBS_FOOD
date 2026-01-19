@@ -241,8 +241,8 @@ def allergy_risk_step(obs: dict, user_allergies: Optional[str] = None) -> dict:
 # -----------------------------
 
 def diabetes_risk_step(obs: dict, diabetes_type: Optional[str] = None) -> dict:
-    """Assess diabetes risks focusing on glycemic curve and carbohydrates."""
-    
+    """Assess diabetes risks focusing on glycemic curve and insulin resistance."""
+
     diabetes_context = ""
     if diabetes_type and diabetes_type != "general":
         type_guidance = {
@@ -251,33 +251,39 @@ def diabetes_risk_step(obs: dict, diabetes_type: Optional[str] = None) -> dict:
             "gestational": "Gestational - Focus on blood sugar stability. Avoid high-GI foods.",
             "prediabetes": "Prediabetes - Focus on prevention. Emphasize low-GI, high-fiber choices."
         }.get(diabetes_type, "")
-        
+
         if type_guidance:
             diabetes_context = f"\n⚠️ USER HAS: {type_guidance}\n"
-    
+
+    # UPDATED SYSTEM PROMPT:
+    # Explicitly distinguishes between "good buffers" (healthy fats/fiber)
+    # and "risk factors" (saturated fats/processed meats).
     system_prompt = (
-        "You are a Diabetes Educator.\n"
-        "Assess glycemic risk based on visible food observation.\n"
-        "Categorize impact as 'Steady', 'Gradual Rise', or 'Sharp Spike'.\n"
-        "Identify 'Glucose Drivers' and 'Glucose Buffers'.\n"
-        "Return ONLY valid JSON."
+        "You are a Diabetes Educator. Assess health risks based on the provided food observation. "
+        "1. Assess Glycemic Risk (Carbs/Sugar).\n"
+        "2. Assess Insulin Resistance & Heart Health (Saturated Fats, Sodium, Processed Meats).\n"
+        "IMPORTANT: Do not treat high-fat items like bacon, butter, or processed meats merely as 'Glucose Buffers'. "
+        "While they may slow absorption, they pose risks for insulin resistance and heart health. "
+        "If these are present, downgrade the decision to 'Caution' or 'Avoid' even if carbs are low. "
+        "Return STRICT JSON only."
     )
 
     user_prompt = (
-        "Given this food observation, assess diabetes risk.\n"
+        "Assess the diabetes and metabolic risk for this food observation:\n"
         f"{diabetes_context}\n"
+        f"{json.dumps(obs, indent=2)}\n\n"
         "Output JSON with:\n"
         "- decision: likely_ok | caution | avoid\n"
-        "- glucose_curve_prediction (Sharp Spike | Gradual Rise | Steady)\n"
+        "- glucose_curve_prediction (Sharp Spike | Gradual Rise | Steady | Delayed Rise)\n"
         "- carbohydrate_load (Low | Medium | High)\n"
-        "- net_carbs_estimate (e.g., '20-30g')\n"
-        "- glucose_drivers (list of visible triggers)\n"
-        "- glucose_buffers (list of fiber/protein/fat sources)\n"
-        "- reasons (linked to visible evidence and diabetes type if provided)\n"
-        "- advice_short (tailored to diabetes type if provided)\n"
+        "- net_carbs_estimate (e.g. '20-30g')\n"
+        "- glucose_drivers (list of visible carb/sugar triggers)\n"
+        "- glucose_buffers (list of fiber/protein/healthy fat sources)\n"
+        "- insulin_resistance_risks (list high saturated fats, processed meats like bacon/sausage, or heavy cream)\n"
+        "- reasons (explain the balance of carbs vs. insulin resistance risks)\n"
+        "- advice_short\n"
         "- confidence (0–1)\n"
-        "- uncertainty_notes\n\n"
-        f"Food observation:\n{json.dumps(obs, indent=2)}"
+        "- uncertainty_notes"
     )
 
     out = openai_chat(

@@ -9,6 +9,7 @@ import {
   Platform,
   Image,
 } from "react-native";
+import { LinearGradient } from 'expo-linear-gradient';
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
@@ -34,33 +35,33 @@ const getBackendUrl = () => {
 const BACKEND_URL = getBackendUrl();
 
 const HEALTH_CONDITIONS = [
-  { 
-    value: "ibs", 
-    label: "IBS", 
-    icon: "🩺",
-    description: "Digestive health & FODMAPs",
-    color: "#9C27B0" // Purple
-  },
-  { 
-    value: "allergy", 
-    label: "Allergy", 
-    icon: "⚠️",
+    {
+    value: "allergy",
+    label: "Food Allergies",
+    icon: require('./assets/images/food_allergy.png'),
     description: "Allergens & cross-contamination",
-    color: "#FF5722" // Red-orange
+    color: "#FF5722" // Red-o5range67
   },
-  { 
-    value: "diabetes", 
-    label: "Diabetes", 
-    icon: "🩸",
+  {
+    value: "diabetes",
+    label: "Diabetes Support",
+    icon: require('./assets/images/diabetes.png'),
     description: "Blood sugar & carbs",
     color: "#2196F3" // Blue
   },
-  { 
-    value: "hypertension", 
-    label: "Hypertension", 
-    icon: "❤️",
+  {
+    value: "hypertension",
+    label: "Hypertension Care",
+    icon: require('./assets/images/hypertension.png'),
     description: "Blood pressure & sodium",
     color: "#F44336" // Red
+  },
+  {
+    value: "ibs",
+    label: "IBS Management",
+    icon: require('./assets/images/ibs.png'),
+    description: "Digestive health & FODMAPs",
+    color: "#9C27B0" // Purple
   },
 ];
 
@@ -387,6 +388,18 @@ export default function App() {
               </View>
             </>
           )}
+          {riskResult.insulin_resistance_risks?.length > 0 && (
+            <>
+              <Text style={styles.sectionTitle}>⚠️ Insulin Resistance Risks</Text>
+              <View style={styles.insulinRisksCard}>
+                {riskResult.insulin_resistance_risks.map((risk, idx) => (
+                  <Text key={idx} style={styles.insulinRiskItem}>
+                    • {risk}
+                  </Text>
+                ))}
+              </View>
+            </>
+          )}
         </>
       );
     }
@@ -445,29 +458,45 @@ export default function App() {
           contentContainerStyle={styles.homeScrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Logo and Description */}
+          {/* Logo and Description77777777777777 */}
           <View style={styles.homeHeader}>
-            <Image 
-              source={require('./assets/images/logo.png')}
+            <Image
+              source={require('./assets/images/newest_logo1.png')}
               style={styles.homeLogo}
               resizeMode="contain"
             />
-            <Text style={styles.homeTitle}>FoodSense</Text>
             <Text style={styles.homeDescription}>
-              AI-powered food analysis for your health. Select a condition to begin.
+              Scan. Analyze. Eat Safely
+            </Text>
+            <Text style={styles.homeSubDescription}>
+              AI powered food analysis
+            </Text>
+            <Text style={styles.homeMinorDescription}>
+              Select Your Condition To Begin
             </Text>
           </View>
 
-          {/* 4 Condition Buttons */}
+          {/* 4 Co55ndition Buttons */}
           <View style={styles.homeButtons}>
             {HEALTH_CONDITIONS.map((condition) => (
               <TouchableOpacity
                 key={condition.value}
-                style={[styles.homeButton, { borderColor: condition.color }]}
+                style={styles.homeButtonWrapper}
                 onPress={() => handleConditionSelect(condition.value)}
               >
-                <Text style={styles.homeButtonIcon}>{condition.icon}</Text>
-                <Text style={styles.homeButtonText}>{condition.label}</Text>
+                <LinearGradient
+                  colors={['#FFFFFF', '#FAFAFA', '#FFFFFF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.homeButton, { borderColor: condition.color }]}
+                >
+                  <Image
+                    source={condition.icon}
+                    style={styles.homeButtonIcon}
+                    resizeMode="contain"
+                  />
+                  <Text style={styles.homeButtonText}>{condition.label}</Text>
+                </LinearGradient>
               </TouchableOpacity>
             ))}
           </View>
@@ -497,8 +526,8 @@ export default function App() {
             <Text style={styles.backButtonText}>← Back</Text>
           </TouchableOpacity>
           <View style={styles.appTitleSection}>
-            <Image 
-              source={require('./assets/images/logo.png')}
+            <Image
+              source={require('./assets/images/newest_logo1.png')}
               style={styles.smallLogo}
               resizeMode="contain"
             />
@@ -717,7 +746,7 @@ const styles = StyleSheet.create({
   // Google Material Design System
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#f3f3f4",
   },
   
   // App Bar - Material Design
@@ -728,7 +757,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingTop: 30,
     paddingHorizontal: 16,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#f3f3f4",
     borderBottomWidth: 1,
     borderBottomColor: "#E8EAED",
   },
@@ -762,7 +791,7 @@ const styles = StyleSheet.create({
   activeConditionsSection: {
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: "#F8F9FA",
+    backgroundColor: "#f3f3f4",
     borderBottomWidth: 1,
     borderBottomColor: "#E8EAED",
   },
@@ -827,6 +856,21 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: "italic",
   },
+  //yy7777777777
+  homeSubDescription: {
+    marginBottom:36,
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+  },
+  homeMinorDescription: {
+    fontWeight: "500",
+    fontSize: 14,
+    color: "#black",
+    textAlign: "center",
+    marginTop: 4,
+    paddingBottom: 1,
+  },
   optionsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -878,10 +922,10 @@ const styles = StyleSheet.create({
   camera: {
     flex: 1,
   },
-  // Buttons - Material Design
+  // Buttons - Ma55terial Design
   primaryButton: {
     backgroundColor: "#1A73E8",
-    paddingVertical: 14,
+    paddingVertical: 5,
     paddingHorizontal: 24,
     borderRadius: 4,
     alignItems: "center",
@@ -904,7 +948,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     backgroundColor: "#FFFFFF",
-    paddingVertical: 14,
+    paddingVertical: 5,
     paddingHorizontal: 24,
     borderRadius: 4,
     alignItems: "center",
@@ -1248,6 +1292,22 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     lineHeight: 20,
   },
+  insulinRisksCard: {
+    backgroundColor: "#fff3e0",
+    padding: 16,
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#ff9800",
+  },
+  insulinRiskItem: {
+    fontSize: 14,
+    color: "#e65100",
+    marginBottom: 6,
+    lineHeight: 20,
+    fontWeight: "500",
+  },
   // Hypertension-specific styles
   hypertensionCard: {
     backgroundColor: "#fce4ec",
@@ -1411,7 +1471,7 @@ const styles = StyleSheet.create({
   // Home Screen - Simple Selection
   homeContainer: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#f3f3f4",
   },
   homeScrollView: {
     flex: 1,
@@ -1426,44 +1486,59 @@ const styles = StyleSheet.create({
   },
   homeHeader: {
     alignItems: "center",
-    marginBottom: 64,
-  },
-  homeLogo: {
-    width: 120,
-    height: 120,
     marginBottom: 24,
+  },
+  //marker8888888888888
+  homeLogo: {
+    width: 580,
+    height: 180,
+    marginBottom: 1,
   },
   homeTitle: {
     fontSize: 32,
     fontWeight: "400",
     color: "#202124",
-    marginBottom: 16,
+    marginBottom: 1,
     letterSpacing: -0.5,
   },
   homeDescription: {
-    fontSize: 16,
-    color: "#5F6368",
+    fontSize: 20,
+    color: "black",
     textAlign: "center",
     lineHeight: 24,
     maxWidth: 300,
+    paddingBottom: 5,
+    fontWeight: "500",
   },
   homeButtons: {
     width: "100%",
     gap: 16,
+    alignItems: "center",
   },
+  homeButtonWrapper: {
+    width: "85%",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
+    borderRadius: 20,
+  },
+  //55555
   homeButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 20,
     paddingHorizontal: 24,
-    backgroundColor: "#FFFFFF",
     borderWidth: 2,
-    borderRadius: 8,
-    gap: 12,
+    borderRadius: 20,
+    gap: 7,
+    overflow: 'hidden',
   },
   homeButtonIcon: {
-    fontSize: 28,
+    width: 32,
+    height: 32,
   },
   homeButtonText: {
     fontSize: 18,
@@ -1600,3 +1675,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+
+// Export styles for testing
+export { styles };
