@@ -137,17 +137,24 @@ def allergy_risk_step(obs: dict, user_allergies: Optional[str] = None) -> dict:
         )
     system_prompt = (
         "You provide practical food allergy guidance.\n"
+        "Use common-sense thresholds:\n"
         "- Fresh fruits and vegetables with no visible allergens → likely_ok\n"
         "- Clearly visible major allergens (nuts, wheat, dairy) → avoid\n"
         "- Mixed, processed, or unclear dishes → caution\n"
-        "Focus on cross-contamination risks. Return ONLY valid JSON."
+        "Focus on cross-contamination risks.\n"
+        "Return ONLY valid JSON."
     )
     user_prompt = (
-        f"Given this food observation, assess allergy risk.\n{allergy_context}\n"
+        "Given this food observation, assess allergy risk.\n"
+        f"{allergy_context}\n"
         "Output JSON with:\n"
-        "- decision: likely_ok | caution | avoid\n"
-        "- suspected_allergens\n- possible_hidden_allergens\n"
-        "- cross_contamination_risks\n- reasons\n- advice_short\n- confidence (0-1)\n\n"
+        "- decision: likely_ok | caution | avoid (prioritize user's specific allergies if provided)\n"
+        "- suspected_allergens (visible allergens, ESPECIALLY user's known allergies)\n"
+        "- possible_hidden_allergens (may be present but not visible)\n"
+        "- cross_contamination_risks (especially for user's allergies)\n"
+        "- reasons (linked to visible evidence and user's allergies)\n"
+        "- advice_short (personalized to user's allergies if provided)\n"
+        "- confidence (0-1)\n\n"
         f"Food observation:\n{json.dumps(obs, indent=2)}"
     )
     out = openai_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
@@ -166,18 +173,30 @@ def diabetes_risk_step(obs: dict, diabetes_type: Optional[str] = None) -> dict:
         if type_guidance:
             diabetes_context = f"\n⚠️ USER HAS: {type_guidance}\n"
     system_prompt = (
-        "You are a Diabetes Educator. Assess health risks based on the food observation. "
-        "1. Assess Glycemic Risk. 2. Assess Insulin Resistance & Heart Health. "
-        "Do not treat high-fat items merely as glucose buffers — they pose insulin resistance risks. "
+        "You are a Diabetes Educator. Assess health risks based on the provided food observation. "
+        "1. Assess Glycemic Risk (Carbs/Sugar).\n"
+        "2. Assess Insulin Resistance & Heart Health (Saturated Fats, Sodium, Processed Meats).\n"
+        "IMPORTANT: Do not treat high-fat items like bacon, butter, or processed meats merely as 'Glucose Buffers'. "
+        "While they may slow absorption, they pose risks for insulin resistance and heart health. "
+        "If these are present, downgrade the decision to 'Caution' or 'Avoid' even if carbs are low. "
         "Return STRICT JSON only."
     )
     user_prompt = (
-        f"Assess diabetes risk:\n{diabetes_context}\n{json.dumps(obs, indent=2)}\n\n"
+        "Assess the diabetes and metabolic risk for this food observation:\n"
+        f"{diabetes_context}\n"
+        f"{json.dumps(obs, indent=2)}\n\n"
         "Output JSON with:\n"
         "- decision: likely_ok | caution | avoid\n"
-        "- glucose_curve_prediction\n- carbohydrate_load\n- net_carbs_estimate\n"
-        "- glucose_drivers\n- glucose_buffers\n- insulin_resistance_risks\n"
-        "- reasons\n- advice_short\n- confidence (0-1)\n- uncertainty_notes"
+        "- glucose_curve_prediction (Sharp Spike | Gradual Rise | Steady | Delayed Rise)\n"
+        "- carbohydrate_load (Low | Medium | High)\n"
+        "- net_carbs_estimate (e.g. '20-30g')\n"
+        "- glucose_drivers (list of visible carb/sugar triggers)\n"
+        "- glucose_buffers (list of fiber/protein/healthy fat sources)\n"
+        "- insulin_resistance_risks (list high saturated fats, processed meats like bacon/sausage, or heavy cream)\n"
+        "- reasons (explain the balance of carbs vs. insulin resistance risks)\n"
+        "- advice_short\n"
+        "- confidence (0-1)\n"
+        "- uncertainty_notes"
     )
     out = openai_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
     return extract_json(out)
@@ -196,14 +215,22 @@ def hypertension_risk_step(obs: dict, hypertension_severity: Optional[str] = Non
     system_prompt = (
         "You are a Hypertension Specialist and DASH Diet expert.\n"
         "Assess blood pressure risk based on visible food observation.\n"
+        "Identify 'Pressure Drivers' (sodium, saturated fats, added sugars)\n"
+        "and 'Pressure Buffers' (potassium, magnesium, fiber, healthy fats).\n"
         "Return ONLY valid JSON."
     )
     user_prompt = (
-        f"Assess hypertension risk.\n{hypertension_context}\n"
+        "Given this food observation, assess hypertension risk.\n"
+        f"{hypertension_context}\n"
         "Output JSON with:\n"
         "- decision: likely_ok | caution | avoid\n"
-        "- sodium_load_estimate\n- pressure_drivers\n- pressure_buffers\n"
-        "- reasons\n- advice_short\n- confidence (0-1)\n- uncertainty_notes\n\n"
+        "- sodium_load_estimate (Low | Medium | High)\n"
+        "- pressure_drivers (list of visible sodium/fat triggers)\n"
+        "- pressure_buffers (list of potassium/magnesium/fiber sources)\n"
+        "- reasons (linked to visual evidence and severity if provided)\n"
+        "- advice_short (DASH-aligned tips, tailored to severity if provided)\n"
+        "- confidence (0-1)\n"
+        "- uncertainty_notes\n\n"
         f"Food observation:\n{json.dumps(obs, indent=2)}"
     )
     out = openai_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}])
